@@ -5,6 +5,10 @@
 ## امکانات
 - **دانشنامه** (`/knowledge`): ثبت، ویرایش، جستجو و حذف پرسش و پاسخ.
 - **قوانین ثابت** (دکمه‌ی «قوانین ثابت» در صفحه‌ی دانشنامه، پاپ‌آپ): قانون‌هایی مثل «پاسخ همیشه با لحنی محترمانه اما صمیمی باشد» که روی همه‌ی پاسخ‌ها اعمال می‌شوند. هر ردیف یک قانون است و قابل ویرایش، حذف و فعال/غیرفعال کردن است. وقتی قانون فعالی هست، حتی تطابق‌های کامل هم از AI عبور می‌کنند تا قوانین اعمال شوند (اگر AI در دسترس نباشد، همان پاسخ دانشنامه داده می‌شود).
+- **تحلیل دانشنامه‌ها** (`/analysis`):
+  - **آمار استفاده**: نمودار دانشنامه‌ها به ترتیب تعداد سؤال‌هایی که با آن‌ها پاسخ داده شده، با عدد دقیق.
+  - **دانشنامه‌های مشکل‌دار**: با دکمه‌ی «شروع تحلیل»، هوش مصنوعی محتوا را از نظر معنایی بررسی می‌کند و موارد چندمعنایی، مبهم، متناقض یا هم‌پوشان را با نوع مشکل، علت، دانشنامه‌ی مرتبط و متن دقیق مشکل‌دار نشان می‌دهد. هشداری که متن ذکرشده‌اش عیناً در دانشنامه نباشد، یا اطمینان مدل کمتر از ۸۰ باشد، دور ریخته می‌شود. تحلیل مرحله‌به‌مرحله و با رعایت ریت لیمیت AI اجرا می‌شود.
+  - **استثناها**: دکمه‌ی «استثنا» هشدار یک دانشنامه را از لیست فعال به لیست استثناها می‌برد (در دیتابیس ذخیره می‌شود؛ محتوا تغییر نمی‌کند) و «خروج از استثنا» آن را برمی‌گرداند.
 - **گفتگو** (`/`): صفحه‌ی چت شبیه ChatGPT؛ گفتگوهای اخیر در سایدبار (ذخیره در مرورگر).
 - **آستانه‌ی دقت**: پاسخ فقط وقتی ارسال می‌شود که اطمینان حداقل `MIN_CONFIDENCE` (پیش‌فرض ۸۰٪) باشد؛ در غیر این صورت پیام «پاسخ دقیقی پیدا نشد» نمایش داده و سوال در **سوال‌های بی‌پاسخ** (`/unanswered`) ثبت می‌شود تا با یک کلیک به دانشنامه اضافه شود.
 - **ریت لیمیت مدل AI**: سقف درخواست در دقیقه و روز برای کل سیستم، سقف درخواست هم‌زمان، احترام به `429` و `Retry-After` (توقف موقت ارسال)، و سقف سوال برای هر کاربر (IP).
@@ -26,9 +30,9 @@ php -S 127.0.0.1:8080 -t public router.php
 ## ساختار
 ```
 app/Core         هسته: App، Router، Request، Response، View، Database، Migrator، Env، Csrf، Session
-app/Controllers  ChatController، KnowledgeController، RuleController، UnansweredController
-app/Models       Knowledge، Rule، ChatMessage، Unanswered، Setting
-app/Services     AnswerService (فلوی اصلی)، AiClient، Retriever، RateLimiter، TextNormalizer
+app/Controllers  ChatController، KnowledgeController، RuleController، AnalysisController، UnansweredController
+app/Models       Knowledge، Rule، KbIssue، ChatMessage، Unanswered، Setting
+app/Services     AnswerService (فلوی اصلی)، KbAnalyzer (تحلیل دانشنامه)، AiClient، Retriever، RateLimiter، TextNormalizer
 app/Views        قالب‌ها (layouts/main.php = سایدبار + محتوا)
 config           app.php (تنظیمات از .env)، routes.php
 database         migrations

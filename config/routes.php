@@ -2,6 +2,7 @@
 
 declare(strict_types=1);
 
+use App\Controllers\AnalysisController;
 use App\Controllers\ChatController;
 use App\Controllers\KnowledgeController;
 use App\Controllers\RuleController;
@@ -26,6 +27,13 @@ $router->get('/api/rules', [RuleController::class, 'index']);
 $router->post('/api/rules', [RuleController::class, 'store']);
 $router->post('/api/rules/{id}/update', [RuleController::class, 'update']);
 $router->post('/api/rules/{id}/delete', [RuleController::class, 'delete']);
+
+// تحلیل دانشنامه‌ها
+$router->get('/analysis', [AnalysisController::class, 'index']);
+$router->post('/api/analysis/start', [AnalysisController::class, 'start']);
+$router->post('/api/analysis/step', [AnalysisController::class, 'step']);
+$router->post('/analysis/{id}/except', [AnalysisController::class, 'except']);
+$router->post('/analysis/{id}/unexcept', [AnalysisController::class, 'unexcept']);
 
 // سوال‌های بی‌پاسخ
 $router->get('/unanswered', [UnansweredController::class, 'index']);

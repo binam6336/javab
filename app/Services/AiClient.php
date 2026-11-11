@@ -19,11 +19,12 @@ final class AiClient
 
     /**
      * @param array<int,array{role:string,content:string}> $messages
+     * @param array<string,mixed> $override تغییر موقت تنظیمات بدنه (مثلاً max_tokens برای تحلیل)
      * @return array{ok:bool,content:string,code:int,error:string,retry_after:int,rate_limited:bool,trace:array<string,mixed>}
      */
-    public static function chat(array $messages): array
+    public static function chat(array $messages, array $override = []): array
     {
-        $cfg = (array) App::config('ai');
+        $cfg = array_merge((array) App::config('ai'), $override);
         if (!empty($cfg['require_key']) && trim((string) $cfg['api_key']) === '') {
             Logger::error('AI_API_KEY در فایل .env تنظیم نشده؛ درخواستی به AI ارسال نشد', ['url' => $cfg['url']]);
             return [

@@ -2,6 +2,7 @@
 /** @var string $content @var string $title */
 use App\Core\Csrf;
 use App\Core\Session;
+use App\Models\KbIssue;
 use App\Models\Knowledge;
 use App\Models\Unanswered;
 
@@ -11,7 +12,9 @@ $flashes = Session::pullFlash();
 try {
     $openUnanswered = Unanswered::openCount();
     $kbTotal = Knowledge::count();
+    $kbIssues = KbIssue::activeCount();
 } catch (\Throwable $e) {
+    $kbIssues = 0;
     $openUnanswered = 0;
     $kbTotal = 0;
 }
@@ -46,6 +49,7 @@ try {
         <nav class="sb-nav">
             <a class="sb-link <?= $page === 'chat' ? 'is-active' : '' ?>" href="<?= e(url('/')) ?>"><?= icon('chat') ?><span>گفتگو با دستیار</span></a>
             <a class="sb-link <?= $page === 'knowledge' ? 'is-active' : '' ?>" href="<?= e(url('/knowledge')) ?>"><?= icon('book') ?><span>دانشنامه</span><em class="sb-count"><?= e(fa_num($kbTotal)) ?></em></a>
+            <a class="sb-link <?= $page === 'analysis' ? 'is-active' : '' ?>" href="<?= e(url('/analysis')) ?>"><?= icon('chart') ?><span>تحلیل دانشنامه‌ها</span><?php if ($kbIssues > 0): ?><em class="sb-badge" title="دانشنامه‌های دارای هشدار"><?= e(fa_num($kbIssues)) ?></em><?php endif; ?></a>
             <a class="sb-link <?= $page === 'unanswered' ? 'is-active' : '' ?>" href="<?= e(url('/unanswered')) ?>"><?= icon('help') ?><span>سوال‌های بی‌پاسخ</span><?php if ($openUnanswered > 0): ?><em class="sb-badge"><?= e(fa_num($openUnanswered)) ?></em><?php endif; ?></a>
         </nav>
 

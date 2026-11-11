@@ -24,6 +24,8 @@ return [
         'top_p'       => Env::float('AI_TOP_P', 0.9),
         'max_tokens'  => Env::int('AI_MAX_TOKENS', 1200),
         'retries'     => Env::int('AI_RETRIES', 1),
+        // سقف توکن خروجی برای «تحلیل دانشنامه‌ها»
+        'analysis_max_tokens' => Env::int('AI_ANALYSIS_MAX_TOKENS', 3000),
     ],
 
     // ------------------------------------------------------------------
