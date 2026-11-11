@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use App\Controllers\ChatController;
 use App\Controllers\KnowledgeController;
+use App\Controllers\RuleController;
 use App\Controllers\UnansweredController;
 
 /** @var \App\Core\Router $router */
@@ -19,6 +20,12 @@ $router->post('/knowledge', [KnowledgeController::class, 'store']);
 $router->get('/knowledge/{id}/edit', [KnowledgeController::class, 'edit']);
 $router->post('/knowledge/{id}/update', [KnowledgeController::class, 'update']);
 $router->post('/knowledge/{id}/delete', [KnowledgeController::class, 'delete']);
+
+// قوانین ثابت (JSON، پاپ‌آپ دانشنامه)
+$router->get('/api/rules', [RuleController::class, 'index']);
+$router->post('/api/rules', [RuleController::class, 'store']);
+$router->post('/api/rules/{id}/update', [RuleController::class, 'update']);
+$router->post('/api/rules/{id}/delete', [RuleController::class, 'delete']);
 
 // سوال‌های بی‌پاسخ
 $router->get('/unanswered', [UnansweredController::class, 'index']);

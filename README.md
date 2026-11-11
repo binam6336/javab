@@ -4,6 +4,7 @@
 
 ## امکانات
 - **دانشنامه** (`/knowledge`): ثبت، ویرایش، جستجو و حذف پرسش و پاسخ.
+- **قوانین ثابت** (دکمه‌ی «قوانین ثابت» در صفحه‌ی دانشنامه، پاپ‌آپ): قانون‌هایی مثل «پاسخ همیشه با لحنی محترمانه اما صمیمی باشد» که روی همه‌ی پاسخ‌ها اعمال می‌شوند. هر ردیف یک قانون است و قابل ویرایش، حذف و فعال/غیرفعال کردن است. وقتی قانون فعالی هست، حتی تطابق‌های کامل هم از AI عبور می‌کنند تا قوانین اعمال شوند (اگر AI در دسترس نباشد، همان پاسخ دانشنامه داده می‌شود).
 - **گفتگو** (`/`): صفحه‌ی چت شبیه ChatGPT؛ گفتگوهای اخیر در سایدبار (ذخیره در مرورگر).
 - **آستانه‌ی دقت**: پاسخ فقط وقتی ارسال می‌شود که اطمینان حداقل `MIN_CONFIDENCE` (پیش‌فرض ۸۰٪) باشد؛ در غیر این صورت پیام «پاسخ دقیقی پیدا نشد» نمایش داده و سوال در **سوال‌های بی‌پاسخ** (`/unanswered`) ثبت می‌شود تا با یک کلیک به دانشنامه اضافه شود.
 - **ریت لیمیت مدل AI**: سقف درخواست در دقیقه و روز برای کل سیستم، سقف درخواست هم‌زمان، احترام به `429` و `Retry-After` (توقف موقت ارسال)، و سقف سوال برای هر کاربر (IP).
@@ -25,8 +26,8 @@ php -S 127.0.0.1:8080 -t public router.php
 ## ساختار
 ```
 app/Core         هسته: App، Router، Request، Response، View، Database، Migrator، Env، Csrf، Session
-app/Controllers  ChatController، KnowledgeController، UnansweredController
-app/Models       Knowledge، ChatMessage، Unanswered، Setting
+app/Controllers  ChatController، KnowledgeController، RuleController، UnansweredController
+app/Models       Knowledge، Rule، ChatMessage، Unanswered، Setting
 app/Services     AnswerService (فلوی اصلی)، AiClient، Retriever، RateLimiter، TextNormalizer
 app/Views        قالب‌ها (layouts/main.php = سایدبار + محتوا)
 config           app.php (تنظیمات از .env)، routes.php
@@ -41,7 +42,8 @@ storage          لاگ‌ها و کش
 3. تطابق تقریباً کامل (`KB_DIRECT_MATCH`) ← پاسخ مستقیم بدون AI
 4. کش پاسخ
 5. ریت لیمیت و هم‌زمانی مدل ← درخواست به AI با بدنه‌ی `model / messages[system,user] / temperature / top_p / stream:false / max_tokens`
-6. مدل خروجی `{"answer","confidence","sources"}` می‌دهد؛ اگر `confidence` کمتر از `MIN_CONFIDENCE` بود یا منبع معتبری نداشت، پاسخ ارسال نمی‌شود.
+6. قوانین ثابتِ فعال به پیام سیستمی مدل اضافه می‌شوند.
+7. مدل خروجی `{"answer","confidence","sources"}` می‌دهد؛ اگر `confidence` کمتر از `MIN_CONFIDENCE` بود یا منبع معتبری نداشت، پاسخ ارسال نمی‌شود.
 
 همه‌ی تنظیمات در `.env.example` توضیح داده شده‌اند.
 

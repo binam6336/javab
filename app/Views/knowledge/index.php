@@ -1,13 +1,18 @@
 <?php
-/** @var array $list @var string $search @var array $old */
+/** @var array $list @var string $search @var array $old @var int $rulesActive */
 use App\Core\View;
+use App\Models\Rule;
 ?>
 <div class="page">
-    <div class="page-head">
+    <div class="page-head page-head-row">
         <div>
             <h1>دانشنامه</h1>
             <p class="muted">هر پرسش و پاسخی که اینجا ثبت می‌کنید، منبع دانش دستیار است.</p>
         </div>
+        <button type="button" class="btn btn-accent" data-rules-open aria-haspopup="dialog">
+            <?= icon('rules', 'ic ic-sm') ?><span>قوانین ثابت</span>
+            <span class="pill pill-dark" data-rules-count<?= $rulesActive ? '' : ' hidden' ?>><?= e(fa_num($rulesActive)) ?></span>
+        </button>
     </div>
 
     <div class="grid-2">
@@ -64,3 +69,28 @@ use App\Core\View;
         </section>
     </div>
 </div>
+
+<dialog class="modal" id="rules-modal" aria-labelledby="rules-title">
+    <div class="modal-box">
+        <div class="modal-head">
+            <div>
+                <h2 class="modal-title" id="rules-title"><?= icon('rules', 'ic') ?> قوانین ثابت</h2>
+                <p class="muted modal-sub">قانون‌هایی که روی <b>همه‌ی پاسخ‌ها</b> اعمال می‌شوند؛ مثل لحن، قالب یا جمله‌ی پایانی. هر ردیف یک قانون است.</p>
+            </div>
+            <button type="button" class="icon-btn" data-rules-close aria-label="بستن" title="بستن"><?= icon('close', 'ic') ?></button>
+        </div>
+
+        <form class="rule-add" data-rules-form>
+            <textarea name="body" rows="2" maxlength="<?= Rule::BODY_MAX ?>" required placeholder="مثلاً: پاسخ همیشه باید با لحنی محترمانه اما صمیمی باشد."></textarea>
+            <button class="btn btn-primary" type="submit"><?= icon('plus', 'ic ic-sm') ?><span>افزودن</span></button>
+        </form>
+        <p class="rule-msg" data-rules-msg role="status" hidden></p>
+
+        <ul class="rule-list" data-rules-list aria-live="polite"></ul>
+        <div class="empty rule-empty" data-rules-empty hidden>
+            <?= icon('rules', 'ic ic-xl') ?>
+            <p>هنوز قانونی ثبت نشده است.</p>
+        </div>
+        <p class="field-hint rule-foot">قانون‌های غیرفعال ذخیره می‌مانند ولی روی پاسخ‌ها اثری ندارند. وقتی قانون فعالی وجود دارد، همه‌ی پاسخ‌ها (حتی تطابق‌های کامل) از هوش مصنوعی عبور می‌کنند تا قوانین اعمال شوند.</p>
+    </div>
+</dialog>

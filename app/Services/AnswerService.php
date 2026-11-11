@@ -9,6 +9,7 @@ use App\Core\Database;
 use App\Core\Logger;
 use App\Models\ChatMessage;
 use App\Models\Knowledge;
+use App\Models\Rule;
 use App\Models\Setting;
 use App\Models\Unanswered;
 
@@ -17,6 +18,8 @@ use App\Models\Unanswered;
  *  ۱) ریت لیمیت کاربر
  *  ۲) پیدا کردن نزدیک‌ترین موارد دانشنامه (Retriever)
  *  ۳) تطابق تقریباً کامل → پاسخ مستقیم از دانشنامه (بدون مصرف سهمیه‌ی AI)
+ *     — اگر «قوانین ثابت» فعال باشند، پاسخ از AI می‌گذرد تا قوانین روی آن اعمال شود؛
+ *       پاسخ مستقیم فقط وقتی AI در دسترس نیست استفاده می‌شود.
  *  ۴) کش پاسخ
  *  ۵) ریت لیمیت/هم‌زمانی مدل AI → ارسال درخواست
  *  ۶) فقط اگر اطمینان ≥ MIN_CONFIDENCE بود پاسخ ارسال می‌شود؛ وگرنه سوال در «بی‌پاسخ‌ها» ثبت می‌شود.
@@ -90,13 +93,19 @@ final class AnswerService
         $hits = Retriever::search($question, $topK, (int) $kb['scan_limit']);
         $best = $hits[0] ?? null;
 
+        $rules = Rule::activeBodies();
+
         // ۳) تطابق تقریباً کامل با یک سوال موجود
+        $direct = null;
         if ($best && $best['question_score'] >= (float) $kb['direct_match']) {
             $row = Knowledge::find($best['id']);
             if ($row) {
                 $conf = (int) round($best['question_score'] * 100);
                 if ($conf >= $minConfidence) {
-                    return self::result('answered', (string) $row['answer'], $conf, [self::source($row)], 'direct');
+                    $direct = self::result('answered', (string) $row['answer'], $conf, [self::source($row)], 'direct');
+                    if (!$rules) {
+                        return $direct;
+                    }
                 }
             }
         }
@@ -126,9 +135,10 @@ final class AnswerService
         }
 
         // ۵) ریت لیمیت و هم‌زمانی مدل
-        $ai = self::callAi($question, $history, $ordered);
+        $ai = self::callAi($question, $history, $ordered, $rules);
         if ($ai['status'] !== 'ok') {
-            return $ai['result'];
+            // AI در دسترس نیست ولی پاسخ دقیق در دانشنامه هست → همان پاسخ (بدون اعمال قوانین)
+            return $direct ?? $ai['result'];
         }
 
         // ۶) ارزیابی پاسخ مدل
@@ -157,13 +167,14 @@ final class AnswerService
     /**
      * @param array<int,array{role:string,content:string}> $history
      * @param array<int,array<string,mixed>> $candidates
+     * @param string[] $rules قوانین ثابت فعال
      * @return array{status:string,data?:array<string,mixed>,result?:array}
      */
-    private static function callAi(string $question, array $history, array $candidates): array
+    private static function callAi(string $question, array $history, array $candidates, array $rules = []): array
     {
         $retries = max(0, (int) App::config('ai.retries', 1));
         $messages = [
-            ['role' => 'system', 'content' => self::systemPrompt((int) App::config('kb.min_confidence', 80))],
+            ['role' => 'system', 'content' => self::systemPrompt((int) App::config('kb.min_confidence', 80), $rules)],
             ['role' => 'user', 'content' => self::userPrompt($question, $history, $candidates)],
         ];
 
@@ -215,7 +226,37 @@ final class AnswerService
         return ['status' => 'error', 'result' => self::result('error', self::text('ai_error', 0), null, [], null, 0)];
     }
 
-    private static function systemPrompt(int $minConfidence): string
+    /** @param string[] $rules */
+    private static function systemPrompt(int $minConfidence, array $rules = []): string
+    {
+        return self::basePrompt($minConfidence) . self::rulesPrompt($rules);
+    }
+
+    /** @param string[] $rules */
+    private static function rulesPrompt(array $rules): string
+    {
+        if (!$rules) {
+            return '';
+        }
+        $list = '';
+        foreach (array_values($rules) as $i => $r) {
+            $list .= ($i + 1) . '. ' . str_replace(["\r\n", "\r", "\n"], ' ', $r) . "\n";
+        }
+        return <<<EOT
+
+
+## قوانین ثابت (تعیین‌شده توسط مدیر — روی «همه‌ی» پاسخ‌ها اعمال کن)
+{$list}
+- این قوانین لحن، قالب، طول و متن تکمیلی پاسخ (مثل خوش‌آمد یا جمله‌ی پایانی) را تعیین می‌کنند و باید دقیق رعایت شوند.
+- متنی که یک قانون صریحاً می‌گوید به پاسخ اضافه شود مجاز است، حتی اگر در knowledge نباشد؛ اما اطلاعات دیگری از خودت اضافه نکن.
+- اگر قانونی می‌گوید به نوعی سوال پاسخ داده نشود، answer را خالی و confidence را 0 بگذار.
+- confidence فقط میزان پشتیبانی knowledge از اصل پاسخ را نشان می‌دهد؛ تغییر لحن و قالب به‌خاطر قوانین آن را کم نمی‌کند.
+- اگر قانونی با قوانین بالا (فقط بر اساس knowledge و خروجی فقط JSON) در تضاد بود، قوانین بالا مقدم‌اند.
+- خروجی همچنان فقط همان JSON است: {"answer":"...","confidence":0,"sources":[...]}
+EOT;
+    }
+
+    private static function basePrompt(int $minConfidence): string
     {
         return <<<EOT
 تو «دستیار پاسخ‌گوی خودکار» هستی و فقط بر اساس «دانشنامه»ی داده‌شده پاسخ می‌دهی.

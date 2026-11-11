@@ -419,3 +419,72 @@ button, input, textarea { font: inherit; color: inherit; }
     .search input { min-width: 0; width: 100%; }
     .search { width: 100%; }
 }
+
+/* ---------------- قوانین ثابت (پاپ‌آپ دانشنامه) ---------------- */
+.page-head-row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.pill-dark { background: var(--acc-ink); color: var(--acc); }
+
+.modal {
+    width: min(640px, calc(100% - 32px)); max-height: calc(100dvh - 48px);
+    padding: 0; border: 1px solid var(--line); border-radius: var(--radius-lg);
+    background: var(--surface); color: var(--ink); box-shadow: var(--shadow-lg);
+}
+.modal::backdrop { background: rgba(15, 12, 40, .55); backdrop-filter: blur(2px); }
+.modal[open] { animation: modal-in .18s ease-out; }
+@keyframes modal-in { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
+.modal-box { padding: 20px; display: flex; flex-direction: column; gap: 14px; }
+.modal-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.modal-title { display: flex; align-items: center; gap: 8px; font-size: 18px; font-weight: 800; margin: 0; }
+.modal-title .ic { color: var(--acc-600); }
+.modal-sub { margin: 4px 0 0; font-size: 13.5px; line-height: 1.8; }
+
+.rule-add { display: flex; gap: 8px; align-items: stretch; }
+.rule-add textarea, .rule-edit textarea {
+    flex: 1; width: 100%; resize: vertical; min-height: 46px;
+    padding: 10px 14px; border-radius: 12px;
+    border: 1.5px solid var(--line); background: var(--surface);
+}
+.rule-add textarea:focus, .rule-edit textarea:focus { outline: none; border-color: var(--brand-300); box-shadow: 0 0 0 4px rgba(75, 67, 166, .12); }
+.rule-add .btn { flex-shrink: 0; align-self: flex-start; }
+.rule-msg { margin: -4px 0 0; font-size: 13px; color: var(--err); }
+.rule-msg.is-ok { color: var(--ok); }
+
+.rule-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; counter-reset: rule; }
+.rule-item {
+    display: flex; gap: 10px; align-items: flex-start;
+    padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius);
+    background: var(--surface); counter-increment: rule;
+}
+.rule-item::before {
+    content: counter(rule); flex-shrink: 0;
+    width: 26px; height: 26px; border-radius: 8px; display: grid; place-items: center;
+    font-size: 12.5px; font-weight: 700; background: var(--acc-100); color: #8a6200;
+}
+.rule-item.is-off { background: var(--surface-2); }
+.rule-item.is-off .rule-body { color: var(--muted); text-decoration: line-through; text-decoration-color: rgba(139, 136, 166, .5); }
+.rule-item.is-off::before { background: var(--line); color: var(--muted); }
+.rule-body { flex: 1; min-width: 0; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; padding-top: 1px; }
+.rule-tools { display: flex; gap: 2px; align-items: center; flex-shrink: 0; }
+.rule-edit { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.rule-edit-actions { display: flex; gap: 6px; }
+.rule-empty { padding: 24px 10px; }
+.rule-foot { margin: 0; line-height: 1.8; }
+
+.switch { position: relative; display: inline-flex; width: 38px; height: 22px; cursor: pointer; margin-inline-end: 4px; }
+.switch input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.switch span { flex: 1; border-radius: 99px; background: var(--line); transition: background .15s; position: relative; }
+.switch span::after {
+    content: ""; position: absolute; top: 3px; right: 3px; width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .2); transition: transform .15s;
+}
+.switch input:checked + span { background: var(--ok); }
+.switch input:checked + span::after { transform: translateX(-16px); }
+.switch input:focus-visible + span { box-shadow: 0 0 0 3px rgba(75, 67, 166, .3); }
+
+@media (max-width: 640px) {
+    .modal { width: 100%; max-width: 100%; max-height: 92dvh; margin: auto 0 0; border-radius: var(--radius-lg) var(--radius-lg) 0 0; }
+    .modal-box { padding: 16px; }
+    .rule-add { flex-direction: column; }
+    .rule-add .btn { align-self: stretch; justify-content: center; }
+    .page-head-row .btn { width: 100%; justify-content: center; }
+}

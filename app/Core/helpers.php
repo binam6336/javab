@@ -48,6 +48,7 @@ function short_text(string $text, int $limit = 120): string
 function icon(string $name, string $class = 'ic'): string
 {
     $paths = [
+        'rules'   => '<path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6l1 1 2-2M4 12l1 1 2-2M4 18l1 1 2-2"/>',
         'chat'    => '<path d="M4 5h16v11H8l-4 4z"/>',
         'book'    => '<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/>',
         'help'    => '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.3-1 .9-1 1.7v.5"/><path d="M12 17.5h.01"/>',

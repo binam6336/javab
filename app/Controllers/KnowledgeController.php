@@ -9,6 +9,7 @@ use App\Core\Request;
 use App\Core\Response;
 use App\Core\Session;
 use App\Models\Knowledge;
+use App\Models\Rule;
 use App\Models\Unanswered;
 
 final class KnowledgeController extends Controller
@@ -30,7 +31,8 @@ final class KnowledgeController extends Controller
             'page'    => 'knowledge',
             'list'    => Knowledge::paginate($search, $page),
             'search'  => $search,
-            'scripts' => ['knowledge'],
+            'scripts' => ['knowledge', 'rules'],
+            'rulesActive' => count(Rule::activeBodies()),
             'old'     => $old + ['question' => $prefill, 'answer' => '', 'from' => $fromId ?: ''],
         ]);
     }
