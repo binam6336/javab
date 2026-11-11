@@ -13,7 +13,8 @@
 1. PHP 7.4+ (پیشنهادی 8.2) با افزونه‌های `pdo_mysql`، `mbstring`، `curl` و MySQL 5.7+ یا MariaDB 10.3+.
 2. فایل `.env.example` را به `.env` کپی و اطلاعات دیتابیس (`DB_*`) و یک `APP_KEY` تصادفی را وارد کنید.
 3. روت سایت را روی پوشه‌ی `public` بگذارید (یا روی ریشه‌ی پروژه؛ `index.php` و `.htaccess` ریشه هم کار می‌کنند).
-4. صفحه‌ی اصلی را باز کنید: **دیتابیس (اگر نباشد) و همه‌ی جدول‌ها خودکار ساخته می‌شوند** (`database/migrations/*.sql`).
+4. هوش مصنوعی پیش‌فرض **Agnes AI** است (`AI_URL=https://apihub.agnes-ai.com/v1/chat/completions`، `AI_MODEL=agnes-2.5-flash`): در [پلتفرم Agnes](https://platform.agnes-ai.com/) حساب بسازید، یک API Key بگیرید و در `AI_API_KEY` بگذارید (به‌صورت `Authorization: Bearer` ارسال می‌شود). هر سرویس دیگر سازگار با OpenAI هم با تغییر همین سه مقدار کار می‌کند.
+5. صفحه‌ی اصلی را باز کنید: **دیتابیس (اگر نباشد) و همه‌ی جدول‌ها خودکار ساخته می‌شوند** (`database/migrations/*.sql`).
 
 سرور توسعه:
 

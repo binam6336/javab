@@ -24,6 +24,13 @@ final class AiClient
     public static function chat(array $messages): array
     {
         $cfg = (array) App::config('ai');
+        if (!empty($cfg['require_key']) && trim((string) $cfg['api_key']) === '') {
+            Logger::error('AI_API_KEY در فایل .env تنظیم نشده؛ درخواستی به AI ارسال نشد', ['url' => $cfg['url']]);
+            return [
+                'ok' => false, 'content' => '', 'code' => 401, 'error' => 'AI_API_KEY تنظیم نشده',
+                'retry_after' => 0, 'rate_limited' => false, 'trace' => [],
+            ];
+        }
         $body = json_encode([
             'model'       => $cfg['model'],
             'messages'    => $messages,
@@ -39,7 +46,7 @@ final class AiClient
             'Accept-Encoding: gzip, deflate',
         ];
         if (!empty($cfg['api_key'])) {
-            $headers[] = 'Authorization: Bearer ' . $cfg['api_key'];
+            $headers[] = 'Authorization: Bearer ' . trim((string) $cfg['api_key']);
         }
 
         $retryAfter = 0;

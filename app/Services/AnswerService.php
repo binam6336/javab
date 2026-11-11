@@ -256,7 +256,7 @@ EOT;
             'knowledge' => $knowledge,
             'history'   => $history,
             'question'  => $question,
-        ], JSON_UNESCAPED_UNICODE) . "\n/no_think";
+        ], JSON_UNESCAPED_UNICODE) . (App::config('ai.no_think') ? "\n/no_think" : '');
     }
 
     // ---------------------------------------------------------------

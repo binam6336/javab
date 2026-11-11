@@ -14,9 +14,11 @@ return [
     // هوش مصنوعی (ساختار درخواست مطابق API سازگار با OpenAI chat/completions)
     // ------------------------------------------------------------------
     'ai' => [
-        'url'         => (string) Env::get('AI_URL', 'https://hermes.ai.unturf.com/v1/chat/completions'),
-        'model'       => (string) Env::get('AI_MODEL', 'turboderp/Qwen3.8-27B-exl3'),
+        'url'         => (string) Env::get('AI_URL', 'https://apihub.agnes-ai.com/v1/chat/completions'),
+        'model'       => (string) Env::get('AI_MODEL', 'agnes-2.5-flash'),
         'api_key'     => (string) Env::get('AI_API_KEY', ''),
+        'require_key' => Env::bool('AI_REQUIRE_KEY', true),
+        'no_think'    => Env::bool('AI_NO_THINK', false),
         'timeout'     => Env::int('AI_TIMEOUT', 60),
         'temperature' => Env::float('AI_TEMPERATURE', 0.0),
         'top_p'       => Env::float('AI_TOP_P', 0.9),
