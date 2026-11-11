@@ -1,0 +1,12 @@
+# وقتی روت سایت روی پوشه‌ی پروژه است: دسترسی مستقیم به فایل‌های داخلی ممنوع
+Options -Indexes
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^(\.env|\.git|app|config|database|storage)(/|$) - [F,L,NC]
+    RewriteRule ^public/assets/ - [L]
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^ index.php [QSA,L]
+</IfModule>
+<FilesMatch "^\.">
+    Require all denied
+</FilesMatch>
