@@ -13,9 +13,13 @@ use App\Core\Logger;
  */
 final class AiClient
 {
+    /** فایل لاگ کامل درخواست/پاسخ‌های ناموفق AI */
+    public const HTTP_LOG = 'http-ai.log';
+    private const HTTP_LOG_MAX_BYTES = 20 * 1024 * 1024;
+
     /**
      * @param array<int,array{role:string,content:string}> $messages
-     * @return array{ok:bool,content:string,code:int,error:string,retry_after:int,rate_limited:bool}
+     * @return array{ok:bool,content:string,code:int,error:string,retry_after:int,rate_limited:bool,trace:array<string,mixed>}
      */
     public static function chat(array $messages): array
     {
@@ -39,6 +43,7 @@ final class AiClient
         }
 
         $retryAfter = 0;
+        $responseHeaders = [];
         $ch = curl_init((string) $cfg['url']);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
@@ -49,7 +54,11 @@ final class AiClient
             CURLOPT_TIMEOUT        => (int) $cfg['timeout'],
             CURLOPT_CONNECTTIMEOUT => 10,
             CURLOPT_HTTP_VERSION   => CURL_HTTP_VERSION_1_1,
-            CURLOPT_HEADERFUNCTION => static function ($curl, string $line) use (&$retryAfter) {
+            CURLOPT_HEADERFUNCTION => static function ($curl, string $line) use (&$retryAfter, &$responseHeaders) {
+                $trimmed = trim($line);
+                if ($trimmed !== '') {
+                    $responseHeaders[] = $trimmed;
+                }
                 if (stripos($line, 'Retry-After:') === 0) {
                     $v = trim(substr($line, 12));
                     $retryAfter = is_numeric($v) ? (int) $v : max(0, (int) strtotime($v) - time());
@@ -64,8 +73,23 @@ final class AiClient
         $errno    = curl_errno($ch);
         $error    = curl_error($ch);
         curl_close($ch);
+        $ms = (int) ((microtime(true) - $started) * 1000);
 
-        $result = ['ok' => false, 'content' => '', 'code' => $code, 'error' => '', 'retry_after' => $retryAfter, 'rate_limited' => false];
+        $result = [
+            'ok' => false, 'content' => '', 'code' => $code, 'error' => '', 'retry_after' => $retryAfter, 'rate_limited' => false,
+            // اطلاعات کامل رفت‌وبرگشت؛ فقط برای لاگ http-ai
+            'trace' => [
+                'url'              => (string) $cfg['url'],
+                'request_headers'  => self::maskHeaders($headers),
+                'request_body'     => (string) $body,
+                'http_code'        => $code,
+                'curl_errno'       => $errno,
+                'curl_error'       => $error,
+                'duration_ms'      => $ms,
+                'response_headers' => $responseHeaders,
+                'response_body'    => is_string($response) ? $response : '',
+            ],
+        ];
 
         if ($errno) {
             $result['error'] = "curl {$errno}: {$error}";
@@ -87,11 +111,83 @@ final class AiClient
 
         Logger::info('درخواست AI', [
             'code' => $code,
-            'ms'   => (int) ((microtime(true) - $started) * 1000),
+            'ms'   => $ms,
             'ok'   => $result['ok'],
             'err'  => $result['error'],
         ]);
+        if (!$result['ok']) {
+            self::logHttp($result['error'], $result['trace']);
+        }
         return $result;
+    }
+
+    /**
+     * نوشتن لاگ کامل یک درخواست ناموفق در storage/logs/http-ai.log
+     * (JSON درخواست و JSON پاسخ به‌صورت کامل و خوانا).
+     * @param array<string,mixed> $trace
+     */
+    public static function logHttp(string $reason, array $trace): void
+    {
+        $dir = BASE_PATH . '/storage/logs';
+        if (!is_dir($dir)) {
+            @mkdir($dir, 0775, true);
+        }
+        $file = $dir . '/' . self::HTTP_LOG;
+        if (is_file($file) && filesize($file) > self::HTTP_LOG_MAX_BYTES) {
+            @rename($file, $dir . '/http-ai-' . date('Ymd-His') . '.log');
+        }
+
+        $sep = str_repeat('=', 80);
+        $lines = [
+            $sep,
+            '[' . date('Y-m-d H:i:s') . '] AI request failed: ' . $reason,
+            'URL:         POST ' . ($trace['url'] ?? ''),
+            'HTTP code:   ' . ($trace['http_code'] ?? 0),
+            'Duration:    ' . ($trace['duration_ms'] ?? 0) . ' ms',
+        ];
+        if (!empty($trace['curl_errno'])) {
+            $lines[] = 'cURL error:  ' . $trace['curl_errno'] . ' ' . ($trace['curl_error'] ?? '');
+        }
+        $lines[] = '';
+        $lines[] = '--- Request headers ---';
+        $lines[] = implode("\n", (array) ($trace['request_headers'] ?? []));
+        $lines[] = '';
+        $lines[] = '--- Request JSON ---';
+        $lines[] = self::prettyJson((string) ($trace['request_body'] ?? ''));
+        $lines[] = '';
+        $lines[] = '--- Response headers ---';
+        $lines[] = implode("\n", (array) ($trace['response_headers'] ?? [])) ?: '(none)';
+        $lines[] = '';
+        $lines[] = '--- Response JSON ---';
+        $resp = (string) ($trace['response_body'] ?? '');
+        $lines[] = $resp === '' ? '(empty)' : self::prettyJson($resp);
+        $lines[] = '';
+
+        @file_put_contents($file, implode("\n", $lines) . "\n", FILE_APPEND | LOCK_EX);
+    }
+
+    private static function prettyJson(string $raw): string
+    {
+        $decoded = json_decode($raw, true);
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            return $raw; // JSON نیست (مثلاً صفحه‌ی HTML خطا) → همان متن خام
+        }
+        return (string) json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
+
+    /** @param string[] $headers @return string[] کلید API در لاگ ماسک می‌شود */
+    private static function maskHeaders(array $headers): array
+    {
+        return array_map(static function (string $h) {
+            if (stripos($h, 'Authorization:') === 0) {
+                $token = trim(substr($h, 14));
+                $parts = explode(' ', $token, 2);
+                $secret = $parts[1] ?? $parts[0];
+                $masked = strlen($secret) > 8 ? substr($secret, 0, 4) . str_repeat('*', 8) . substr($secret, -4) : '********';
+                return 'Authorization: ' . (isset($parts[1]) ? $parts[0] . ' ' : '') . $masked;
+            }
+            return $h;
+        }, $headers);
     }
 
     /** استخراج JSON از خروجی مدل (با حذف بلوک <think> و ```json). @return array<string,mixed>|null */

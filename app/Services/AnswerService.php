@@ -187,6 +187,7 @@ final class AnswerService
                         return ['status' => 'ok', 'data' => $data];
                     }
                     Logger::warning('JSON از پاسخ مدل استخراج نشد', ['raw' => mb_substr($res['content'], 0, 300)]);
+                    AiClient::logHttp('JSON از پاسخ مدل استخراج نشد', $res['trace']);
                     continue; // یک بار دیگر
                 }
 
