@@ -3,11 +3,6 @@
     'use strict';
     var J = window.Javab;
 
-    // طول میله‌ها (CSP اجازه‌ی style درون‌خطی نمی‌دهد)
-    document.querySelectorAll('.us-bar[data-w]').forEach(function (el) {
-        el.style.width = Math.max(0, Math.min(100, parseInt(el.getAttribute('data-w'), 10) || 0)) + '%';
-    });
-
     var btn = document.querySelector('[data-analysis-run]');
     var status = document.querySelector('[data-analysis-status]');
     if (!btn || !status) return;

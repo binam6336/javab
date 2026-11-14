@@ -105,6 +105,11 @@
         if (msg && !window.confirm(msg)) e.preventDefault();
     });
 
+    // ---------------- طول میله‌های نمودار (CSP اجازه‌ی style درون‌خطی نمی‌دهد) ----------------
+    document.querySelectorAll('.us-bar[data-w]').forEach(function (el) {
+        el.style.width = Math.max(0, Math.min(100, parseInt(el.getAttribute('data-w'), 10) || 0)) + '%';
+    });
+
     window.Javab = {
         url: url,
         esc: esc,

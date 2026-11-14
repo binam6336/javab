@@ -547,3 +547,74 @@ button, input, textarea { font: inherit; color: inherit; }
     .us-track { grid-column: 2 / 4; grid-row: 2; }
     .is-head { flex-wrap: wrap; }
 }
+
+/* ---------------- امتیاز، بازخورد و اصلاح پاسخ ---------------- */
+.msg-fb { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-top: 6px; }
+.fb-stars { display: inline-flex; direction: rtl; margin-inline-end: 4px; }
+.fb-star {
+    border: 0; background: transparent; cursor: pointer; padding: 3px; border-radius: 6px;
+    width: 26px; height: 26px; display: inline-grid; place-items: center;
+}
+.fb-star svg, .stars .star { width: 18px; height: 18px; fill: none; stroke: var(--muted); stroke-width: 1.6; stroke-linejoin: round; transition: fill .12s, stroke .12s, transform .12s; }
+.fb-star:hover svg { transform: scale(1.12); }
+.fb-star.on svg, .stars .star.on { fill: var(--acc); stroke: var(--acc-600); }
+.fb-star:focus-visible { outline: 2px solid var(--brand-300); }
+.fb-msg { font-size: 12px; color: var(--ok); margin-inline-start: 4px; }
+.fb-msg.is-err { color: var(--err); }
+.fb-note { font-size: 13px; color: var(--ink-2); line-height: 1.8; }
+.fb-note:not(:empty) { margin-top: 4px; }
+.fb-note-label { color: var(--muted); font-weight: 600; }
+.fb-form, .fix-form { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; max-width: 640px; }
+.fb-form textarea, .fix-form textarea {
+    width: 100%; resize: vertical; padding: 10px 12px; border-radius: 12px;
+    border: 1.5px solid var(--line); background: var(--surface); font-size: 14px;
+}
+.fb-form textarea:focus, .fix-form textarea:focus { outline: none; border-color: var(--brand-300); box-shadow: 0 0 0 4px rgba(75, 67, 166, .12); }
+.fix-label { font-size: 12.5px; color: var(--muted); }
+.fb-form-actions { display: flex; gap: 6px; }
+.fixed-badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11.5px; font-weight: 700; padding: 1px 9px; border-radius: 99px;
+    background: var(--ok-bg); color: var(--ok);
+}
+.fixed-badge .ic { width: 12px; height: 12px; }
+.src-fix { background: var(--ok-bg); color: var(--ok); }
+
+/* صفحه‌ی مدیریت */
+.stars { display: inline-flex; gap: 1px; direction: rtl; vertical-align: middle; }
+.stars .star { width: 16px; height: 16px; }
+.fb-summary { display: flex; gap: 28px; align-items: center; flex-wrap: wrap; padding: 4px 0 16px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+.fb-avg { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 110px; }
+.fb-avg b { font-size: 32px; line-height: 1; color: var(--ink); }
+.fb-dist { list-style: none; margin: 0; padding: 0; flex: 1; min-width: 220px; max-width: 420px; display: flex; flex-direction: column; gap: 4px; }
+.fb-dist li { display: grid; grid-template-columns: 52px 1fr 36px; gap: 10px; align-items: center; font-size: 12.5px; color: var(--ink-2); }
+.fb-dist b { text-align: left; color: var(--ink); }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.chip { padding: 4px 12px; border-radius: 99px; border: 1px solid var(--line); font-size: 13px; color: var(--ink-2); }
+.chip:hover { text-decoration: none; background: var(--surface-2); }
+.chip.is-active { background: var(--brand); border-color: var(--brand); color: #fff; }
+.fb-hint { margin: 0 0 14px; line-height: 1.9; }
+.fb-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.fb-item { border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; }
+.fb-item.is-off { background: var(--surface-2); }
+.fb-item.is-off .fb-q, .fb-item.is-off .cr-new { color: var(--muted); }
+.fb-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.fb-date { font-size: 12px; }
+.fb-q { font-weight: 700; margin-top: 6px; }
+.fb-head .fb-q { margin-top: 0; flex: 1; min-width: 0; }
+.fb-a { font-size: 13.5px; color: var(--ink-2); line-height: 1.9; margin-top: 4px; }
+.fb-comment { margin-top: 8px; }
+.fb-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 10px; }
+.fb-actions .fb-date { margin-inline-end: auto; }
+.cr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; }
+.cr-old, .cr-new { padding: 8px 12px; border-radius: 10px; font-size: 13.5px; line-height: 1.9; overflow-wrap: anywhere; }
+.cr-old { background: var(--err-bg); color: var(--ink-2); }
+.cr-new { background: var(--ok-bg); color: var(--ink); }
+.cr-edit { margin-top: 10px; }
+.cr-edit summary { list-style: none; display: inline-flex; }
+.cr-edit summary::-webkit-details-marker { display: none; }
+.cr-edit[open] summary { margin-bottom: 10px; }
+.cr-edit .field textarea { font-size: 14px; }
+@media (max-width: 640px) {
+    .cr-grid { grid-template-columns: 1fr; }
+}

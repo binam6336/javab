@@ -8,6 +8,7 @@ use App\Core\App;
 use App\Core\Database;
 use App\Core\Logger;
 use App\Models\ChatMessage;
+use App\Models\Correction;
 use App\Models\Knowledge;
 use App\Models\Rule;
 use App\Models\Setting;
@@ -22,6 +23,8 @@ use App\Models\Unanswered;
  *       پاسخ مستقیم فقط وقتی AI در دسترس نیست استفاده می‌شود.
  *  ۴) کش پاسخ
  *  ۵) ریت لیمیت/هم‌زمانی مدل AI → ارسال درخواست
+ *  * اصلاح‌ها (پاسخ‌های ویرایش‌شده) و امتیاز/بازخوردهای سوال‌های مشابه هم به مدل داده می‌شوند؛
+ *    اصلاحِ تقریباً هم‌سوال بدون AI برگردانده می‌شود.
  *  ۶) فقط اگر اطمینان ≥ MIN_CONFIDENCE بود پاسخ ارسال می‌شود؛ وگرنه سوال در «بی‌پاسخ‌ها» ثبت می‌شود.
  */
 final class AnswerService
@@ -57,10 +60,10 @@ final class AnswerService
 
         // ذخیره‌ی پاسخ در گفتگو (پیام خطا/شلوغی ذخیره نمی‌شود تا کاربر دوباره بپرسد)
         if (in_array($result['status'], ['answered', 'no_answer'], true)) {
-            ChatMessage::add($conversationId, 'assistant', $result['message'], [
+            $result['message_id'] = ChatMessage::add($conversationId, 'assistant', $result['message'], [
                 'status'     => $result['status'],
                 'confidence' => $result['confidence'],
-                'sources'    => array_column($result['sources'], 'id'),
+                'sources'    => self::sourceKeys($result['sources']),
                 'via'        => $result['via'],
             ]);
         }
@@ -68,7 +71,12 @@ final class AnswerService
             Unanswered::record($question, $result['confidence']);
         }
         if ($result['status'] === 'answered') {
-            Knowledge::addHits(array_column($result['sources'], 'id'));
+            $byType = ['kb' => [], 'correction' => []];
+            foreach ($result['sources'] as $src) {
+                $byType[$src['type']][] = $src['id'];
+            }
+            Knowledge::addHits($byType['kb']);
+            Correction::addHits($byType['correction']);
         }
         return $result;
     }
@@ -83,21 +91,44 @@ final class AnswerService
         $minConfidence = (int) $kb['min_confidence'];
         $total = Knowledge::count();
 
-        if ($total === 0) {
+        // اصلاح‌ها و بازخوردهای سوال‌های مشابه
+        $learn = Learning::relevant($question);
+        $corrections = [];
+        foreach ($learn['corrections'] as $c) {
+            $corrections[(int) $c['id']] = $c;
+        }
+        $bestCorrection = $learn['corrections'][0] ?? null;
+
+        if ($total === 0 && !$corrections) {
             return self::noAnswer(null, 'empty');
         }
 
         // ۲) نزدیک‌ترین موارد
         $sendAll = $total <= (int) $kb['send_all_below'];
         $topK = $sendAll ? $total : (int) $kb['top_k'];
-        $hits = Retriever::search($question, $topK, (int) $kb['scan_limit']);
+        $hits = $total > 0 ? Retriever::search($question, $topK, (int) $kb['scan_limit']) : [];
         $best = $hits[0] ?? null;
 
         $rules = Rule::activeBodies();
 
-        // ۳) تطابق تقریباً کامل با یک سوال موجود
+        // ۳-الف) همین سوال قبلاً اصلاح شده است → پاسخ اصلاح‌شده
         $direct = null;
-        if ($best && $best['question_score'] >= (float) $kb['direct_match']) {
+        if ($bestCorrection && $bestCorrection['score'] >= (float) $kb['direct_match']) {
+            $conf = (int) round($bestCorrection['score'] * 100);
+            $direct = self::result('answered', (string) $bestCorrection['corrected_answer'], $conf, [self::correctionSource($bestCorrection)], 'correction');
+            if (!$rules) {
+                return $direct;
+            }
+        }
+
+        // ۳-ب) تطابق تقریباً کامل با یک سوال دانشنامه — مگر این‌که برای این سوال اصلاح یا بازخورد منفی ثبت شده باشد
+        $hasLesson = ($bestCorrection && $bestCorrection['score'] >= 0.5);
+        foreach ($learn['feedback'] as $f) {
+            if ($f['rating'] !== null && (int) $f['rating'] <= 2 && $f['score'] >= (float) $kb['direct_match']) {
+                $hasLesson = true;
+            }
+        }
+        if (!$direct && !$hasLesson && $best && $best['question_score'] >= (float) $kb['direct_match']) {
             $row = Knowledge::find($best['id']);
             if ($row) {
                 $conf = (int) round($best['question_score'] * 100);
@@ -111,7 +142,7 @@ final class AnswerService
         }
 
         // دانشنامه بزرگ است و هیچ مورد نزدیکی پیدا نشد → AI صدا زده نمی‌شود
-        if (!$sendAll && (!$best || $best['score'] < (float) $kb['min_relevance'])) {
+        if (!$corrections && !$sendAll && (!$best || $best['score'] < (float) $kb['min_relevance'])) {
             return self::noAnswer($best ? (int) round($best['score'] * 100) : 0, 'retrieval');
         }
 
@@ -135,7 +166,7 @@ final class AnswerService
         }
 
         // ۵) ریت لیمیت و هم‌زمانی مدل
-        $ai = self::callAi($question, $history, $ordered, $rules);
+        $ai = self::callAi($question, $history, $ordered, $rules, $learn);
         if ($ai['status'] !== 'ok') {
             // AI در دسترس نیست ولی پاسخ دقیق در دانشنامه هست → همان پاسخ (بدون اعمال قوانین)
             return $direct ?? $ai['result'];
@@ -145,16 +176,20 @@ final class AnswerService
         $data = $ai['data'];
         $confidence = max(0, min(100, (int) ($data['confidence'] ?? 0)));
         $answer = trim((string) preg_replace('/<think>.*?<\/think>/s', '', (string) ($data['answer'] ?? '')));
-        $sourceIds = array_values(array_filter(array_map('intval', (array) ($data['sources'] ?? [])), static function ($id) use ($candidates) {
-            return isset($candidates[$id]);
-        }));
+        $sources = [];
+        foreach ((array) ($data['sources'] ?? []) as $sid) {
+            $sid = trim((string) $sid);
+            if (preg_match('/^c(\d+)$/i', $sid, $m) && isset($corrections[(int) $m[1]])) {
+                $sources['c' . $m[1]] = self::correctionSource($corrections[(int) $m[1]]);
+            } elseif (ctype_digit($sid) && isset($candidates[(int) $sid])) {
+                $sources[$sid] = self::source($candidates[(int) $sid]);
+            }
+        }
+        $sources = array_slice(array_values($sources), 0, 3);
 
-        if ($answer === '' || !$sourceIds || $confidence < $minConfidence || !empty($data['no_answer'])) {
+        if ($answer === '' || !$sources || $confidence < $minConfidence || !empty($data['no_answer'])) {
             $result = self::noAnswer($confidence, 'ai');
         } else {
-            $sources = array_map(static function ($id) use ($candidates) {
-                return self::source($candidates[$id]);
-            }, array_slice($sourceIds, 0, 3));
             $result = self::result('answered', $answer, $confidence, $sources, 'ai');
         }
 
@@ -168,14 +203,15 @@ final class AnswerService
      * @param array<int,array{role:string,content:string}> $history
      * @param array<int,array<string,mixed>> $candidates
      * @param string[] $rules قوانین ثابت فعال
+     * @param array{corrections:array,feedback:array} $learn اصلاح‌ها و بازخوردهای مرتبط
      * @return array{status:string,data?:array<string,mixed>,result?:array}
      */
-    private static function callAi(string $question, array $history, array $candidates, array $rules = []): array
+    private static function callAi(string $question, array $history, array $candidates, array $rules = [], array $learn = ['corrections' => [], 'feedback' => []]): array
     {
         $retries = max(0, (int) App::config('ai.retries', 1));
         $messages = [
-            ['role' => 'system', 'content' => self::systemPrompt((int) App::config('kb.min_confidence', 80), $rules)],
-            ['role' => 'user', 'content' => self::userPrompt($question, $history, $candidates)],
+            ['role' => 'system', 'content' => self::systemPrompt((int) App::config('kb.min_confidence', 80), $rules, (bool) ($learn['corrections'] || $learn['feedback']))],
+            ['role' => 'user', 'content' => self::userPrompt($question, $history, $candidates, $learn)],
         ];
 
         $slot = RateLimiter::acquireAiSlot();
@@ -227,9 +263,26 @@ final class AnswerService
     }
 
     /** @param string[] $rules */
-    private static function systemPrompt(int $minConfidence, array $rules = []): string
+    private static function systemPrompt(int $minConfidence, array $rules = [], bool $learning = false): string
     {
-        return self::basePrompt($minConfidence) . self::rulesPrompt($rules);
+        return self::basePrompt($minConfidence) . ($learning ? self::learningPrompt() : '') . self::rulesPrompt($rules);
+    }
+
+    private static function learningPrompt(): string
+    {
+        return <<<EOT
+
+
+## درس‌های گرفته‌شده از پاسخ‌های قبلی (در صورت وجود در ورودی)
+- corrections: آرایه‌ای از {"id":"c3","q":"سوال قبلی","wrong":"پاسخ قبلی که اشتباه بود","a":"پاسخ اصلاح‌شده توسط مدیر"}.
+  - اگر نیت سوال فعلی با q یکی است، پاسخ را بر اساس «a»ی اصلاح‌شده بنویس؛ این پاسخ از knowledge معتبرتر است و منبع مجاز اطلاعات حساب می‌شود (id آن را مثل "c3" در sources بیاور).
+  - چیزی که در «wrong» بوده و در «a» اصلاح شده را هرگز تکرار نکن.
+  - اگر نیت سوال فعلی با q فرق دارد، آن اصلاح را نادیده بگیر.
+- feedback: آرایه‌ای از {"q":"سوال قبلی","answer":"پاسخی که داده شد","rating":1..5,"comment":"توضیح کاربر"}.
+  - امتیاز ۱ و ۲ یعنی آن پاسخ مشکل داشته است: اشکالی را که comment می‌گوید (یا اگر comment ندارد، همان شکل پاسخ) برای سوال مشابه تکرار نکن.
+  - امتیاز ۴ و ۵ یعنی آن نوع پاسخ رضایت‌بخش بوده و می‌توانی از شیوه‌ی آن پیروی کنی.
+  - feedback منبع اطلاعات نیست و در sources نمی‌آید؛ اطلاعات فقط از knowledge و corrections گرفته می‌شود.
+EOT;
     }
 
     /** @param string[] $rules */
@@ -287,17 +340,39 @@ EOT;
      * @param array<int,array{role:string,content:string}> $history
      * @param array<int,array<string,mixed>> $candidates
      */
-    private static function userPrompt(string $question, array $history, array $candidates): string
+    private static function userPrompt(string $question, array $history, array $candidates, array $learn = ['corrections' => [], 'feedback' => []]): string
     {
         $knowledge = array_map(static function ($row) {
             return ['id' => (int) $row['id'], 'q' => (string) $row['question'], 'a' => mb_substr((string) $row['answer'], 0, 1500)];
         }, $candidates);
 
-        return json_encode([
-            'knowledge' => $knowledge,
-            'history'   => $history,
-            'question'  => $question,
-        ], JSON_UNESCAPED_UNICODE) . (App::config('ai.no_think') ? "\n/no_think" : '');
+        $payload = ['knowledge' => $knowledge];
+        if ($learn['corrections']) {
+            $payload['corrections'] = array_map(static function ($c) {
+                return [
+                    'id'    => 'c' . (int) $c['id'],
+                    'q'     => (string) $c['question'],
+                    'wrong' => mb_substr((string) $c['original_answer'], 0, 800),
+                    'a'     => mb_substr((string) $c['corrected_answer'], 0, 1500),
+                ];
+            }, $learn['corrections']);
+        }
+        if ($learn['feedback']) {
+            $payload['feedback'] = array_map(static function ($f) {
+                return array_filter([
+                    'q'       => (string) $f['question'],
+                    'answer'  => mb_substr((string) $f['answer'], 0, 600),
+                    'rating'  => $f['rating'] !== null ? (int) $f['rating'] : null,
+                    'comment' => trim((string) $f['comment']) !== '' ? mb_substr((string) $f['comment'], 0, 500) : null,
+                ], static function ($v) {
+                    return $v !== null;
+                });
+            }, $learn['feedback']);
+        }
+        $payload['history'] = $history;
+        $payload['question'] = $question;
+
+        return json_encode($payload, JSON_UNESCAPED_UNICODE) . (App::config('ai.no_think') ? "\n/no_think" : '');
     }
 
     // ---------------------------------------------------------------
@@ -316,12 +391,11 @@ EOT;
         if ($row['status'] === 'no_answer') {
             return self::noAnswer($row['confidence'] !== null ? (int) $row['confidence'] : null, 'cache');
         }
-        $ids = array_filter(array_map('intval', explode(',', (string) $row['sources'])));
-        $rows = Knowledge::findMany($ids);
-        if (count($rows) !== count($ids)) {
+        $keys = array_values(array_filter(explode(',', (string) $row['sources'])));
+        $sources = self::sourcesFromKeys($keys);
+        if (count($sources) !== count($keys)) {
             return null;
         }
-        $sources = array_map([self::class, 'source'], array_values($rows));
         return self::result('answered', (string) $row['answer'], (int) $row['confidence'], $sources, 'cache');
     }
 
@@ -336,7 +410,7 @@ EOT;
                 $result['status'],
                 $result['status'] === 'answered' ? $result['message'] : null,
                 $result['confidence'],
-                implode(',', array_column($result['sources'], 'id')) ?: null,
+                implode(',', self::sourceKeys($result['sources'])) ?: null,
             ]
         );
     }
@@ -348,7 +422,57 @@ EOT;
     /** @param array<string,mixed> $row @return array{id:int,question:string} */
     private static function source(array $row): array
     {
-        return ['id' => (int) $row['id'], 'question' => (string) $row['question']];
+        return ['id' => (int) $row['id'], 'question' => (string) $row['question'], 'type' => 'kb'];
+    }
+
+    /** @param array<string,mixed> $row */
+    private static function correctionSource(array $row): array
+    {
+        return ['id' => (int) $row['id'], 'question' => (string) $row['question'], 'type' => 'correction'];
+    }
+
+    /**
+     * کلید ذخیره‌ی منبع‌ها: «12» برای دانشنامه، «c3» برای اصلاح.
+     * @param array<int,array{id:int,type:string}> $sources
+     * @return string[]
+     */
+    public static function sourceKeys(array $sources): array
+    {
+        return array_map(static function ($s) {
+            return (($s['type'] ?? 'kb') === 'correction' ? 'c' : '') . (int) $s['id'];
+        }, $sources);
+    }
+
+    /**
+     * @param string[] $keys
+     * @return array<int,array{id:int,question:string,type:string}> فقط منبع‌هایی که هنوز وجود دارند
+     */
+    public static function sourcesFromKeys(array $keys): array
+    {
+        $kbIds = [];
+        $cIds = [];
+        foreach ($keys as $k) {
+            $k = trim((string) $k);
+            if (preg_match('/^c(\d+)$/', $k, $m)) {
+                $cIds[] = (int) $m[1];
+            } elseif (ctype_digit($k)) {
+                $kbIds[] = (int) $k;
+            }
+        }
+        $kb = Knowledge::findMany($kbIds);
+        $cr = Correction::findMany($cIds);
+        $out = [];
+        foreach ($keys as $k) {
+            $k = trim((string) $k);
+            if (preg_match('/^c(\d+)$/', $k, $m)) {
+                if (isset($cr[(int) $m[1]])) {
+                    $out[] = self::correctionSource($cr[(int) $m[1]]);
+                }
+            } elseif (ctype_digit($k) && isset($kb[(int) $k])) {
+                $out[] = self::source($kb[(int) $k]);
+            }
+        }
+        return $out;
     }
 
     private static function noAnswer(?int $confidence, string $via): array

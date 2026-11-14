@@ -20,7 +20,9 @@ final class ChatMessage
                 $content,
                 (string) ($data['status'] ?? 'ok'),
                 isset($data['confidence']) ? (int) $data['confidence'] : null,
-                !empty($data['sources']) ? implode(',', array_map('intval', $data['sources'])) : null,
+                !empty($data['sources']) ? implode(',', array_filter(array_map('strval', $data['sources']), static function ($k) {
+                    return (bool) preg_match('/^c?\d+$/', $k);
+                })) : null,
                 $data['via'] ?? null,
                 $data['ip_hash'] ?? null,
             ]
@@ -56,6 +58,21 @@ final class ChatMessage
         return array_reverse(array_map(static function ($r) {
             return ['role' => (string) $r['role'], 'content' => mb_substr((string) $r['content'], 0, 600)];
         }, $rows));
+    }
+
+    /** @return array<string,mixed>|null */
+    public static function find(int $id): ?array
+    {
+        return Database::one('SELECT * FROM `chat_messages` WHERE `id` = ?', [$id]);
+    }
+
+    /** سوالِ کاربر که این پیام دستیار پاسخ آن بوده است */
+    public static function questionFor(array $assistant): string
+    {
+        return (string) Database::value(
+            "SELECT `content` FROM `chat_messages` WHERE `conversation_id` = ? AND `role` = 'user' AND `id` < ? ORDER BY `id` DESC LIMIT 1",
+            [$assistant['conversation_id'], $assistant['id']]
+        );
     }
 
     /** @return array{total:int,answered:int,no_answer:int} */
