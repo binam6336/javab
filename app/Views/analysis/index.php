@@ -1,7 +1,7 @@
 <?php
 /**
  * @var array $usage @var array|null $last @var bool $stale @var string $tab
- * @var array $active @var array $excepted
+ * @var array $active @var array $excepted @var bool $oldCriteria @var int $rulesCount
  */
 use App\Models\KbIssue;
 
@@ -73,13 +73,27 @@ $bar = static function (array $r, int $rank) use ($max): string {
                 <?php if (!empty($last['failed'])): ?>
                     — <span class="an-warn"><?= e(fa_num((int) $last['failed'])) ?> بخش به‌خاطر خطای هوش مصنوعی بررسی نشد</span>
                 <?php endif; ?>
-                <?php if ($stale): ?>
-                    — <span class="an-warn">دانشنامه بعد از این تحلیل تغییر کرده است</span>
+                <?php if ($oldCriteria): ?>
+                    — <span class="an-warn">معیارهای تحلیل تغییر کرده است؛ برای نتیجه‌ی جدید دوباره تحلیل کنید</span>
+                <?php elseif ($stale): ?>
+                    — <span class="an-warn">دانشنامه یا قوانین ثابت بعد از این تحلیل تغییر کرده است</span>
                 <?php endif; ?>
             <?php else: ?>
                 هنوز تحلیلی انجام نشده است. تحلیل با هوش مصنوعی و بر اساس معنای محتوا انجام می‌شود.
             <?php endif; ?>
         </p>
+
+        <ul class="an-criteria" aria-label="معیارهای تحلیل">
+            <li><span class="is-type t-unclear"><?= e(KbIssue::TYPES['unclear']) ?></span> پاسخی که جواب روشن و قطعی نمی‌دهد، یا شرط، عدد یا مرحله‌ی لازم را نگفته است.</li>
+            <li><span class="is-type t-conflict"><?= e(KbIssue::TYPES['conflict']) ?></span> دو دانشنامه که یک چیز را می‌پرسند ولی پاسخ‌هایشان در محتوا فرق دارد.</li>
+            <li><span class="is-type t-rule_violation"><?= e(KbIssue::TYPES['rule_violation']) ?></span>
+                <?php if ($rulesCount > 0): ?>
+                    پاسخی که محتوایش با اصول <?= e(fa_num($rulesCount)) ?> قانون ثابت فعال در تضاد است.
+                <?php else: ?>
+                    <span class="muted">قانون ثابت فعالی تعریف نشده؛ این معیار بررسی نمی‌شود.</span>
+                <?php endif; ?>
+            </li>
+        </ul>
 
         <nav class="tabs" aria-label="نوع لیست">
             <a class="tab <?= $tab === 'active' ? 'is-active' : '' ?>" href="<?= e(url('/analysis')) ?>">هشدارهای فعال <span class="pill"><?= e(fa_num(count($active))) ?></span></a>
@@ -130,10 +144,13 @@ $bar = static function (array $r, int $rank) use ($max): string {
                             <div class="is-issue">
                                 <span class="is-type t-<?= e($iss['type']) ?>"><?= e(KbIssue::TYPES[$iss['type']] ?? $iss['type']) ?></span>
                                 <p class="is-reason"><?= e($iss['reason']) ?></p>
-                                <blockquote class="is-quote"><span class="is-label">متن مشکل‌دار</span><?= e($iss['excerpt']) ?></blockquote>
+                                <blockquote class="is-quote"><span class="is-label">متن مشکل‌دار در پاسخ</span><?= e($iss['excerpt']) ?></blockquote>
+                                <?php if (!empty($iss['rule'])): ?>
+                                    <blockquote class="is-quote is-rule"><span class="is-label"><?= icon('rules', 'ic ic-sm') ?> قانون ثابت</span><?= e($iss['rule']) ?></blockquote>
+                                <?php endif; ?>
                                 <?php if ($iss['related']): ?>
                                     <div class="is-rel">
-                                        <span class="is-label"><?= icon('link', 'ic ic-sm') ?> <?= in_array($iss['type'], ['contradiction'], true) ? 'دانشنامه‌ی متناقض' : 'دانشنامه‌ی مرتبط' ?></span>
+                                        <span class="is-label"><?= icon('link', 'ic ic-sm') ?> <?= $iss['type'] === 'conflict' ? 'دانشنامه با همین سوال و پاسخ متفاوت' : 'دانشنامه‌ی مرتبط' ?></span>
                                         <?php foreach ($iss['related'] as $r): ?>
                                             <a href="<?= e(url('/knowledge/' . $r . '/edit')) ?>">#<?= e(fa_num($r)) ?> — <?= e(short_text((string) $item['related_rows'][$r]['question'], 120)) ?></a>
                                         <?php endforeach; ?>

@@ -52,6 +52,8 @@ final class AnalysisController extends Controller
             'usage'    => KbAnalyzer::usage(),
             'last'     => $last,
             'stale'    => $last && ($last['signature'] ?? '') !== KbAnalyzer::signature(),
+            'oldCriteria' => $last && strpos((string) ($last['signature'] ?? ''), 'v' . KbAnalyzer::CRITERIA_VERSION . ':') !== 0,
+            'rulesCount'  => count(KbAnalyzer::activeRules()),
             'tab'      => $tab,
             'active'   => $active,
             'excepted' => $excepted,
@@ -105,6 +107,7 @@ final class AnalysisController extends Controller
             }
         }
         $rows = Knowledge::findMany($ids);
+        $rules = KbAnalyzer::activeRules();
         $crc = [];
         foreach ($rows as $id => $row) {
             $crc[$id] = KbAnalyzer::contentCrc((string) $row['question'], (string) $row['answer']);
@@ -126,7 +129,14 @@ final class AnalysisController extends Controller
             $related = array_values(array_filter(array_map('intval', explode(',', (string) $i['related'])), static function ($r) use ($rows) {
                 return isset($rows[$r]);
             }));
-            $pair = in_array($i['type'], ['contradiction', 'overlap'], true);
+            if (!isset(KbIssue::TYPES[$i['type']])) {
+                continue; // نوع قدیمی (معیارهای نسخه‌ی قبل)
+            }
+            $ruleId = $i['rule_id'] !== null ? (int) $i['rule_id'] : null;
+            if ($i['type'] === 'rule_violation' && ($ruleId === null || !isset($rules[$ruleId]))) {
+                continue; // قانون حذف یا غیرفعال شده است
+            }
+            $pair = $i['type'] === 'conflict';
             if ($pair && !$related) {
                 continue; // مورد مرتبط حذف شده است
             }
@@ -136,6 +146,7 @@ final class AnalysisController extends Controller
                 'excerpt'         => (string) $i['excerpt'],
                 'related'         => $related,
                 'related_excerpt' => (string) ($i['related_excerpt'] ?? ''),
+                'rule'            => $ruleId !== null ? $rules[$ruleId] : null,
             ];
             $add($id, $issue);
             if ((int) $i['content_crc'] !== $crc[$id]) {
@@ -151,6 +162,7 @@ final class AnalysisController extends Controller
                     'excerpt'         => $issue['related_excerpt'],
                     'related'         => array_merge([$id], array_slice($related, 1)),
                     'related_excerpt' => $issue['excerpt'],
+                    'rule'            => null,
                 ]);
                 if ($otherChanged) {
                     $out[$other]['edited'] = true;

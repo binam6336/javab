@@ -8,11 +8,14 @@ use App\Core\App;
 use App\Core\Database;
 use App\Core\Logger;
 use App\Models\KbIssue;
+use App\Models\Rule;
 use App\Models\Setting;
 
 /**
- * تحلیل معنایی محتوای دانشنامه با AI برای پیدا کردن موارد مستعد پاسخ اشتباه:
- * چندمعنایی، ابهام، تناقض و هم‌پوشانی.
+ * تحلیل معنایی محتوای دانشنامه با AI بر اساس سه معیار:
+ *  ۱) unclear        پاسخ شفاف نیست
+ *  ۲) conflict       سوال یکسان (هم‌نیت) با پاسخ‌های متفاوت در دو دانشنامه
+ *  ۳) rule_violation محتوای دانشنامه با اصول «قوانین ثابت» مغایرت دارد
  *
  * - موارد در چند «بسته» به AI داده می‌شوند. وقتی دانشنامه کوچک است همه در یک بسته‌اند.
  *   وقتی بزرگ است، موارد هم‌موضوع (کلمات مشترک) کنار هم قرار می‌گیرند تا AI بتواند آن‌ها را
@@ -33,6 +36,8 @@ final class KbAnalyzer
     private const ANSWER_CHARS = 1200;
     /** حداقل اطمینان مدل برای ثبت هشدار */
     private const MIN_CONFIDENCE = 80;
+    /** نسخه‌ی معیارهای تحلیل؛ با تغییر آن، تحلیل‌های قبلی «قدیمی» نمایش داده می‌شوند */
+    public const CRITERIA_VERSION = 2;
 
     // ---------------------------------------------------------------
     // آمار استفاده
@@ -69,7 +74,8 @@ final class KbAnalyzer
     public static function signature(): string
     {
         $r = Database::one('SELECT COUNT(*) AS c, COALESCE(SUM(CRC32(CONCAT(`id`, 0x0a, `question`, 0x0a, `answer`))), 0) AS s FROM `knowledge`');
-        return ($r['c'] ?? 0) . ':' . ($r['s'] ?? 0);
+        $rules = Database::value('SELECT COALESCE(SUM(CRC32(CONCAT(`id`, 0x0a, `body`))), 0) FROM `rules` WHERE `is_active` = 1');
+        return 'v' . self::CRITERIA_VERSION . ':' . ($r['c'] ?? 0) . ':' . ($r['s'] ?? 0) . ':' . $rules;
     }
 
     /** @return array<string,mixed>|null */
@@ -193,12 +199,12 @@ final class KbAnalyzer
             return [$ids];
         }
 
-        // نمایه‌ی معکوس کلمات معنادار (سوال + پاسخ)
+        // نمایه‌ی معکوس کلمات معنادار سوال (برای کنار هم گذاشتن سوال‌های هم‌نیت)
         $tokens = [];
         $index = [];
         foreach ($items as $r) {
             $id = (int) $r['id'];
-            $t = TextNormalizer::tokens((string) $r['question_norm'] . ' ' . (string) $r['answer_norm']);
+            $t = TextNormalizer::tokens((string) $r['question_norm']);
             $tokens[$id] = $t;
             foreach ($t as $w) {
                 $index[$w][] = $id;
@@ -224,7 +230,7 @@ final class KbAnalyzer
             foreach ($shared as $other => $n) {
                 $den = min(count($t), count($tokens[$other]));
                 $score = $den > 0 ? $n / $den : 0;
-                if ($n >= 2 && $score >= 0.25) {
+                if ($score >= 0.4) {
                     $scored[$other] = $score;
                 }
             }
@@ -291,9 +297,16 @@ final class KbAnalyzer
         foreach ($rows as $id => $r) {
             $payload[] = ['id' => $id, 'q' => (string) $r['question'], 'a' => mb_substr((string) $r['answer'], 0, self::ANSWER_CHARS)];
         }
+        $rules = self::activeRules();
+        $input = ['items' => $payload];
+        if ($rules) {
+            $input['rules'] = array_map(static function ($id, $body) {
+                return ['id' => $id, 'text' => $body];
+            }, array_keys($rules), array_values($rules));
+        }
         $messages = [
-            ['role' => 'system', 'content' => self::prompt()],
-            ['role' => 'user', 'content' => json_encode(['items' => $payload], JSON_UNESCAPED_UNICODE)],
+            ['role' => 'system', 'content' => self::prompt((bool) $rules)],
+            ['role' => 'user', 'content' => json_encode($input, JSON_UNESCAPED_UNICODE)],
         ];
 
         $limit = RateLimiter::aiAttempt();
@@ -333,19 +346,32 @@ final class KbAnalyzer
             return ['status' => 'error'];
         }
 
-        $issues = self::validate($data['issues'], $rows);
+        $issues = self::validate($data['issues'], $rows, $rules);
         KbIssue::insertMany($run, $issues);
         Logger::info('تحلیل دانشنامه: بسته', ['items' => count($rows), 'reported' => count($data['issues']), 'accepted' => count($issues)]);
         return ['status' => 'ok'];
+    }
+
+    /** @return array<int,string> شناسه => متن قوانین ثابت فعال */
+    public static function activeRules(): array
+    {
+        $out = [];
+        foreach (Rule::all() as $r) {
+            if ((int) $r['is_active'] === 1 && trim((string) $r['body']) !== '') {
+                $out[(int) $r['id']] = trim((string) $r['body']);
+            }
+        }
+        return $out;
     }
 
     /**
      * فقط هشدارهایی که شواهد قابل‌بررسی دارند پذیرفته می‌شوند.
      * @param array<int,mixed> $raw
      * @param array<int,array<string,mixed>> $rows
+     * @param array<int,string> $rules
      * @return array<int,array<string,mixed>>
      */
-    private static function validate(array $raw, array $rows): array
+    private static function validate(array $raw, array $rows, array $rules): array
     {
         $out = [];
         $seenPairs = [];
@@ -362,40 +388,40 @@ final class KbAnalyzer
             if (!isset($rows[$id]) || !isset(KbIssue::TYPES[$type]) || $confidence < self::MIN_CONFIDENCE || mb_strlen($reason) < 15) {
                 continue;
             }
-            if (!self::quoted($excerpt, $rows[$id])) {
-                continue; // متن ذکرشده در خود دانشنامه نیست → هشدار بی‌پشتوانه
+            // متن ذکرشده باید عیناً در پاسخ همین دانشنامه باشد؛ وگرنه هشدار بی‌پشتوانه است
+            if (!self::quoted($excerpt, (string) $rows[$id]['answer'])) {
+                continue;
             }
 
             $related = [];
-            foreach ((array) ($it['related'] ?? []) as $r) {
-                $r = (int) $r;
-                if ($r !== $id && isset($rows[$r]) && !in_array($r, $related, true)) {
-                    $related[] = $r;
-                }
-            }
-            $relatedExcerpt = trim((string) ($it['related_excerpt'] ?? ''));
+            $relatedExcerpt = '';
+            $ruleId = null;
 
-            if ($type === 'contradiction' || $type === 'overlap') {
-                if (!$related) {
-                    continue;
-                }
-                $found = false;
-                foreach ($related as $r) {
-                    if (self::quoted($relatedExcerpt, $rows[$r])) {
-                        $found = true;
-                        break;
+            if ($type === 'conflict') {
+                foreach ((array) ($it['related'] ?? []) as $r) {
+                    $r = (int) $r;
+                    if ($r !== $id && isset($rows[$r]) && !in_array($r, $related, true)) {
+                        $related[] = $r;
                     }
                 }
-                if (!$found) {
+                $relatedExcerpt = trim((string) ($it['related_excerpt'] ?? ''));
+                if (!$related || !self::quoted($relatedExcerpt, (string) $rows[$related[0]]['answer'])) {
                     continue;
                 }
-                $pair = $type . ':' . min($id, $related[0]) . '-' . max($id, $related[0]);
+                // دو پاسخ عملاً یکی‌اند → تفاوتی نیست
+                if (TextNormalizer::compact(TextNormalizer::normalize((string) $rows[$id]['answer'])) === TextNormalizer::compact(TextNormalizer::normalize((string) $rows[$related[0]]['answer']))) {
+                    continue;
+                }
+                $pair = min($id, $related[0]) . '-' . max($id, $related[0]);
                 if (isset($seenPairs[$pair])) {
-                    continue; // همان تناقض از سمت مورد دیگر
+                    continue; // همان مورد از سمت دانشنامه‌ی دیگر
                 }
                 $seenPairs[$pair] = true;
-            } else {
-                $relatedExcerpt = '';
+            } elseif ($type === 'rule_violation') {
+                $ruleId = (int) ($it['rule'] ?? 0);
+                if (!isset($rules[$ruleId])) {
+                    continue; // قانون نامعتبر یا غیرفعال
+                }
             }
 
             $out[] = [
@@ -407,52 +433,75 @@ final class KbAnalyzer
                 'related_excerpt' => $relatedExcerpt !== '' ? mb_substr($relatedExcerpt, 0, 600) : null,
                 'content_crc'     => self::contentCrc((string) $rows[$id]['question'], (string) $rows[$id]['answer']),
                 'related_crc'     => $related ? self::contentCrc((string) $rows[$related[0]]['question'], (string) $rows[$related[0]]['answer']) : 0,
+                'rule_id'         => $ruleId,
             ];
         }
         return $out;
     }
 
-    /** آیا این متن (با چشم‌پوشی از تفاوت‌های نوشتاری) واقعاً در سوال یا پاسخ این مورد آمده است؟ @param array<string,mixed> $row */
-    private static function quoted(string $excerpt, array $row): bool
+    /** آیا این متن (با چشم‌پوشی از تفاوت‌های نوشتاری) واقعاً در این متن آمده است؟ */
+    private static function quoted(string $excerpt, string $text): bool
     {
         $e = TextNormalizer::normalize($excerpt);
         if (mb_strlen($e) < 2) {
             return false;
         }
-        $hay = ' ' . TextNormalizer::normalize((string) $row['question']) . ' | ' . TextNormalizer::normalize((string) $row['answer']) . ' ';
-        return mb_strpos($hay, $e) !== false;
+        return mb_strpos(' ' . TextNormalizer::normalize($text) . ' ', $e) !== false;
     }
 
-    private static function prompt(): string
+    private static function prompt(bool $hasRules): string
     {
         $min = self::MIN_CONFIDENCE;
+        $ruleType = $hasRules ? <<<EOT
+
+### ۳) rule_violation — مغایرت با قوانین ثابت
+در ورودی «rules» قوانین ثابتی آمده که مدیر برای همه‌ی پاسخ‌های دستیار تعیین کرده است: {"id":شماره,"text":"متن قانون"}.
+پاسخی را گزارش کن که «محتوای» آن با اصل یک قانون در تضاد است، طوری که اگر عیناً به کاربر گفته شود آن قانون نقض می‌شود و با بازنویسی ساده هم درست نمی‌شود.
+- مثال: قانون «هیچ‌وقت شماره‌ی تماس شخصی کارکنان را ندهید» و پاسخی که شماره‌ی موبایل یک کارمند را دارد؛ قانون «لحن محترمانه» و پاسخی با عبارت توهین‌آمیز یا تحقیرآمیز.
+- قوانین قالب و ظاهر (مثل «در پایان خوش‌آمد بگو» یا «کوتاه بنویس») را دستیار هنگام پاسخ خودش اعمال می‌کند؛ نبودن آن‌ها در متن دانشنامه مغایرت نیست.
+- rule: شماره‌ی id قانون. excerpt: بخشی از پاسخ که با قانون مغایرت دارد.
+EOT : '';
+        $rulesHint = $hasRules ? ',"rules":[{"id":شماره,"text":"قانون"}, ...]' : '';
+        $rulesReason = $hasRules ? '؛ برای rule_violation بگو کدام بخش با کدام اصل قانون در تضاد است' : '';
+        $typesList = $hasRules ? 'unclear، conflict یا rule_violation' : 'unclear یا conflict';
+        $example = $hasRules
+            ? '{"id":5,"type":"rule_violation","rule":2,"excerpt":"...","reason":"...","confidence":90}'
+            : '{"id":3,"type":"unclear","excerpt":"...","reason":"...","confidence":88}';
+
         return <<<EOT
-تو بازبین کیفیت محتوای «دانشنامه»ی یک سیستم پاسخ خودکار هستی. این سیستم سوال کاربران را فقط بر اساس همین موارد جواب می‌دهد.
-وظیفه: مواردی را پیدا کن که «واقعاً» ممکن است باعث پاسخ اشتباه یا گمراه‌کننده شوند.
+تو بازبین کیفیت «دانشنامه»ی یک سیستم پاسخ خودکار هستی. این سیستم سوال کاربران را فقط بر اساس همین پرسش و پاسخ‌ها جواب می‌دهد.
+دانشنامه‌ها را فقط با معیارهای زیر بررسی کن و موارد مشکل‌دار را گزارش کن.
 
 ## ورودی
-{"items":[{"id":شماره,"q":"سوال","a":"پاسخ"}, ...]}
+{"items":[{"id":شماره,"q":"سوال","a":"پاسخ"}, ...]{$rulesHint}}
 
-## انواع مشکل (فقط همین چهار نوع)
-- ambiguity (چندمعنایی): عبارتی در سوال یا پاسخ که دو یا چند برداشت معقول و متفاوت دارد و این برداشت‌ها به نتیجه‌ی متفاوت برای کاربر می‌رسند. باید بتوانی دو برداشت مشخص را نام ببری.
-- vague (ابهام در توضیح یا دستورالعمل): پاسخ برای عمل کردن یا فهمیدن کافی نیست؛ مثلاً مرحله‌ی لازم جا افتاده، به چیزی نامشخص ارجاع داده («بخش مربوطه»)، یا شرط/عدد/مهلت ضروری بیان نشده. فقط وقتی که کاربر با همین متن واقعاً گمراه یا سردرگم می‌شود.
-- contradiction (تناقض): دو مورد درباره‌ی «همان موضوع» و «همان شرایط» چیزی می‌گویند که هم‌زمان نمی‌تواند درست باشد (مثل دو عدد، دو مهلت، دو قاعده‌ی متفاوت برای یک چیز).
-- overlap (هم‌پوشانی): دو مورد عملاً به «یک سوال با یک نیت» جواب می‌دهند ولی پاسخ‌هایشان در جزئیات یا دامنه فرق دارد، طوری که سیستم ممکن است برای یک سوال، گاهی این و گاهی آن را برگرداند و کاربر پاسخ ناقص یا متفاوت بگیرد.
+## معیارها
+
+### ۱) unclear — پاسخ شفاف نیست
+پاسخی که کاربر با خواندنش نمی‌تواند جواب روشن و قطعی سوال را بفهمد یا طبق آن عمل کند؛ مثلاً:
+- مبهم یا کلی است و به خود سوال جواب نمی‌دهد («بستگی دارد»، «با پشتیبانی تماس بگیرید» بدون جواب اصلی).
+- عدد، شرط، مهلت، مبلغ یا مرحله‌ی لازم را نگفته است، یا به چیز نامشخصی ارجاع می‌دهد («بخش مربوطه»، «طبق قوانین»).
+- طوری نوشته شده که دو برداشت متفاوت از آن ممکن است.
+پاسخ کوتاه ولی روشن، شفاف است. سلیقه‌ی نگارشی، غلط املایی یا امکان بهتر نوشتن، مشکل نیست.
+
+### ۲) conflict — سوال یکسان، پاسخ متفاوت
+دو دانشنامه که سوالشان «یک چیز را می‌پرسد» (حتی با کلمات متفاوت) ولی پاسخ‌هایشان در محتوا با هم فرق دارد (عدد، شرط، روش، بله/خیر و ...). در این حالت سیستم برای یک سوال گاهی یک جواب و گاهی جواب دیگر می‌دهد.
+- اگر سوال‌ها فقط موضوع مشترک دارند ولی دو چیز متفاوت می‌پرسند (مثلاً «هزینه‌ی ارسال» و «زمان ارسال»)، conflict نیست.
+- اگر پاسخ‌ها فقط در بیان فرق دارند و محتوایشان یکی است، conflict نیست.
+- related: شماره‌ی دانشنامه‌ی دیگر. excerpt و related_excerpt: بخش متفاوت از پاسخ هر کدام. هر جفت را فقط یک بار گزارش کن.
+{$ruleType}
 
 ## قوانین سخت‌گیرانه
-1. تحلیل معنایی کن. شباهت موضوع یا کلمات مشترک به‌تنهایی تناقض یا هم‌پوشانی نیست. دو مورد درباره‌ی موضوع مشابه ولی سوال متفاوت (مثلاً هزینه‌ی ارسال و زمان ارسال) هم‌پوشانی ندارند.
-2. اگر تفاوت دو مورد با شرایط متفاوت توضیح داده می‌شود (شهر، نوع کاربر، تاریخ، نوع محصول و ...)، تناقض نیست.
-3. اطلاعات کم ولی کافی، یا پاسخ کوتاه ولی روشن، ابهام نیست. سلیقه‌ی نگارشی، غلط املایی و پیشنهاد بهبود، مشکل نیست.
-4. excerpt باید «عیناً» بخشی از متن q یا a همان مورد باشد (کپی دقیق، کوتاه و مشخص؛ همان بخشی که مشکل از آن ناشی می‌شود).
-5. برای contradiction و overlap: related شماره‌ی مورد(های) دیگر، و related_excerpt متن عیناً کپی‌شده از مورد مرتبط است. هر جفت را فقط یک بار گزارش کن.
-6. reason دقیق و مستند باشد: برای چندمعنایی دو برداشت را بنویس؛ برای ابهام بگو دقیقاً چه چیزی کم است؛ برای تناقض بگو کدام ادعا با کدام ادعا ناسازگار است؛ برای هم‌پوشانی بگو چرا نیت سوال یکی است و پاسخ‌ها چه فرقی دارند.
-7. confidence (0 تا 100): چقدر مطمئنی که این واقعاً مشکل است. فقط موارد با confidence حداقل {$min} را گزارش کن. در صورت تردید گزارش نکن؛ هشدار غیرواقعی از هشدار نداده بدتر است.
-8. اگر مشکلی نیست: {"issues":[]}
-9. متن reason فارسی و حداکثر سه جمله باشد.
+1. تحلیل معنایی کن؛ کلمات مشترک یا موضوع مشابه به‌تنهایی دلیل گزارش نیست.
+2. excerpt باید «عیناً» از متن پاسخ (a) همان دانشنامه کپی شود (کوتاه و مشخص، همان بخشی که مشکل از آن است). related_excerpt هم عیناً از پاسخ دانشنامه‌ی مرتبط.
+3. reason دقیق و مستند باشد: برای unclear بگو دقیقاً چه چیزی روشن نیست یا کم است؛ برای conflict بگو چرا دو سوال یکی‌اند و پاسخ‌ها در چه چیزی فرق دارند{$rulesReason}.
+4. confidence (0 تا 100): چقدر مطمئنی که مشکل واقعی است. فقط موارد با confidence حداقل {$min} را گزارش کن؛ در صورت تردید گزارش نکن. هشدار غیرواقعی از هشدار نداده بدتر است.
+5. type فقط یکی از {$typesList} باشد. اگر مشکلی نیست: {"issues":[]}
+6. reason فارسی و حداکثر سه جمله باشد.
 
 ## خروجی
 فقط یک JSON معتبر بدون هیچ متن اضافه:
-{"issues":[{"id":1,"type":"contradiction","related":[2],"excerpt":"...","related_excerpt":"...","reason":"...","confidence":90}]}
+{"issues":[{"id":1,"type":"conflict","related":[2],"excerpt":"...","related_excerpt":"...","reason":"...","confidence":90}, {$example}]}
 EOT;
     }
 }

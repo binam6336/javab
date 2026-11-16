@@ -13,10 +13,9 @@ use App\Core\Database;
 final class KbIssue
 {
     public const TYPES = [
-        'ambiguity'     => 'چندمعنایی',
-        'vague'         => 'ابهام در توضیح یا دستورالعمل',
-        'contradiction' => 'تناقض با دانشنامه‌ی دیگر',
-        'overlap'       => 'هم‌پوشانی مفهومی',
+        'unclear'        => 'پاسخ شفاف نیست',
+        'conflict'       => 'سوال یکسان، پاسخ متفاوت',
+        'rule_violation' => 'مغایرت با قوانین ثابت',
     ];
 
     /** اطلاعات آخرین تحلیل کامل‌شده @return array<string,mixed>|null */
@@ -41,9 +40,17 @@ final class KbIssue
             return 0;
         }
         $ids = [];
-        foreach (Database::all('SELECT `knowledge_id`, `type`, `related` FROM `kb_issues` WHERE `run_id` = ?', [$run]) as $r) {
+        foreach (Database::all(
+            'SELECT i.`knowledge_id`, i.`type`, i.`related` FROM `kb_issues` i
+             LEFT JOIN `rules` r ON r.`id` = i.`rule_id`
+             WHERE i.`run_id` = ? AND (i.`rule_id` IS NULL OR r.`is_active` = 1)',
+            [$run]
+        ) as $r) {
+            if (!isset(self::TYPES[$r['type']])) {
+                continue;
+            }
             $ids[(int) $r['knowledge_id']] = true;
-            if (in_array($r['type'], ['contradiction', 'overlap'], true) && $r['related'] !== '') {
+            if ($r['type'] === 'conflict' && $r['related'] !== '') {
                 $ids[(int) explode(',', (string) $r['related'])[0]] = true;
             }
         }
@@ -72,9 +79,9 @@ final class KbIssue
     {
         foreach ($issues as $i) {
             Database::run(
-                'INSERT INTO `kb_issues` (`run_id`, `knowledge_id`, `type`, `reason`, `related`, `excerpt`, `related_excerpt`, `content_crc`, `related_crc`)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                [$run, $i['knowledge_id'], $i['type'], $i['reason'], implode(',', $i['related']), $i['excerpt'], $i['related_excerpt'], $i['content_crc'], $i['related_crc']]
+                'INSERT INTO `kb_issues` (`run_id`, `knowledge_id`, `type`, `reason`, `related`, `excerpt`, `related_excerpt`, `content_crc`, `related_crc`, `rule_id`)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                [$run, $i['knowledge_id'], $i['type'], $i['reason'], implode(',', $i['related']), $i['excerpt'], $i['related_excerpt'], $i['content_crc'], $i['related_crc'], $i['rule_id'] ?? null]
             );
         }
     }
